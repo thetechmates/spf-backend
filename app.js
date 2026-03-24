@@ -8,6 +8,7 @@ const cors = require("cors");
 const axios = require("axios");
 const { unserialize } = require("php-unserialize");
 const dayjs = require("dayjs");
+const Stripe = require("stripe");
 
 
 
@@ -22,11 +23,51 @@ const {
   JWT_SECRET,
   COOKIE_NAME = "access_token",
   NODE_ENV,
-  RECAPTCHA_SECRET_KEY
+  RECAPTCHA_SECRET_KEY,
+  STRIPE_SECRET_KEY,
+  STRIPE_WEBHOOK_SECRET,
+  FRONTEND_URL = "https://stg.simplyparkandfly.co.uk",
 } = process.env;
+
+const stripe = Stripe(STRIPE_SECRET_KEY);
 
 const REFRESH_COOKIE = "refresh_token";
 const app = express();
+
+// ⚠️ Webhook route MUST be registered before express.json() — requires raw body
+app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error("❌ Webhook signature verification failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  switch (event.type) {
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
+      const session = event.data.object;
+      if (session.payment_status !== "unpaid") {
+        const meta = session.metadata || {};
+        console.log("✅ Payment fulfilled for session:", session.id, meta);
+        // TODO: save booking to database and send confirmation email
+      }
+      break;
+    }
+    case "checkout.session.async_payment_failed": {
+      console.error("❌ Async payment failed for session:", event.data.object.id);
+      break;
+    }
+    default:
+      break;
+  }
+
+  res.json({ received: true });
+});
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -523,6 +564,105 @@ app.post("/logout", (req, res) => {
 
   res.status(204).end();
 });
+
+/**
+ * ✅ POST /stripe/create-checkout-session
+ */
+app.post("/stripe/create-checkout-session", async (req, res) => {
+  try {
+    const { parkingId, currency = "gbp", customerEmail, customerName, bookingDetails } = req.body;
+
+    if (!parkingId || !customerEmail) {
+      return res.status(400).json({ message: "Missing required fields: parkingId or customerEmail" });
+    }
+
+    // TODO: replace this with a real DB lookup using parkingId
+    // Example: const [rows] = await pool.query("SELECT price FROM parking_products WHERE id = ?", [parkingId]);
+    // const amountInPence = rows[0].price;
+    const amountInPence = await getParkingPriceInPence(parkingId);
+
+    const session = await stripe.checkout.sessions.create({
+      ui_mode: "embedded",
+      payment_method_types: ["card"],
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: currency.toLowerCase(),
+            product_data: {
+              name: `Airport Parking — ${parkingId}`,
+              description: `${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
+            },
+            unit_amount: amountInPence,
+          },
+          quantity: 1,
+        },
+      ],
+      customer_email: customerEmail,
+      metadata: {
+        parkingId: String(parkingId),
+        customerName: customerName || "",
+        firstName: bookingDetails?.firstName || "",
+        lastName: bookingDetails?.lastName || "",
+        email: bookingDetails?.email || customerEmail,
+        phone: bookingDetails?.phone || "",
+        licensePlate: bookingDetails?.licensePlate || "",
+        carMake: bookingDetails?.carMake || "",
+        carModel: bookingDetails?.carModel || "",
+        carColor: bookingDetails?.carColor || "",
+        hasFlightDetails: bookingDetails?.hasFlightDetails || "",
+        departureTerminal: bookingDetails?.departureTerminal || "",
+        departureFlightNo: bookingDetails?.departureFlightNo || "",
+        returnTerminal: bookingDetails?.returnTerminal || "",
+        returnFlightNo: bookingDetails?.returnFlightNo || "",
+        arrivalDate: bookingDetails?.arrivalDate || "",
+        departureDate: bookingDetails?.departureDate || "",
+        arrivalTime: bookingDetails?.arrivalTime || "",
+        departureTime: bookingDetails?.departureTime || "",
+      },
+      return_url: `${FRONTEND_URL}/confirmation?session_id={CHECKOUT_SESSION_ID}`,
+    });
+
+    res.json({ sessionId: session.id, clientSecret: session.client_secret });
+  } catch (error) {
+    console.error("❌ Error creating checkout session:", error);
+    res.status(500).json({ message: error.message || "Failed to create checkout session" });
+  }
+});
+
+/**
+ * ✅ GET /stripe/session-status?session_id=xxx
+ * Called by the confirmation page to verify payment status
+ */
+app.get("/stripe/session-status", async (req, res) => {
+  try {
+    const { session_id } = req.query;
+    if (!session_id) {
+      return res.status(400).json({ message: "Missing session_id" });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+
+    res.json({
+      status: session.status,
+      customer_email: session.customer_details?.email || "",
+    });
+  } catch (error) {
+    console.error("❌ Error retrieving session status:", error);
+    res.status(500).json({ message: error.message || "Failed to retrieve session status" });
+  }
+});
+
+/**
+ * Stub: replace with real DB lookup
+ */
+async function getParkingPriceInPence(parkingId) {
+  // TODO: query your database for the price of this parking option
+  // const [rows] = await pool.query("SELECT price_pence FROM parking_products WHERE id = ?", [parkingId]);
+  // if (!rows.length) throw new Error("Parking option not found");
+  // return rows[0].price_pence;
+  throw new Error(`Price lookup not yet implemented for parkingId: ${parkingId}`);
+}
 
 /**
  * ✅ Start server
