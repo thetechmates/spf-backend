@@ -1,0 +1,11 @@
+PORT=3001
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=simplypa_connectapi-v1
+DB_PASS=xerxah-huxMaq-pimqe3
+DB_NAME=simplypa_newtest25-1
+JWT_SECRET=replace_with_long_random_string
+COOKIE_NAME=access_token
+API_BASE_URL=https://auth.simplyparkandfly.co.uk
+FRONTEND_ORIGIN=https://connect.simplyparkandfly.co.uk
+NODE_ENV=production
