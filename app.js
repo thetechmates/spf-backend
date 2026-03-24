@@ -655,13 +655,15 @@ app.get("/stripe/session-status", async (req, res) => {
 
 /**
  * Stub: replace with real DB lookup
+ * TODO: query your database for the actual price using parkingId
  */
 async function getParkingPriceInPence(parkingId) {
-  // TODO: query your database for the price of this parking option
   // const [rows] = await pool.query("SELECT price_pence FROM parking_products WHERE id = ?", [parkingId]);
   // if (!rows.length) throw new Error("Parking option not found");
   // return rows[0].price_pence;
-  throw new Error(`Price lookup not yet implemented for parkingId: ${parkingId}`);
+
+  // Temporary hardcoded price for testing (£31.50)
+  return 3150;
 }
 
 /**
