@@ -52,8 +52,20 @@ app.post("/stripe/webhook", express.raw({ type: "application/json" }), async (re
       const session = event.data.object;
       if (session.payment_status !== "unpaid") {
         const meta = session.metadata || {};
-        console.log("✅ Payment fulfilled for session:", session.id, meta);
-        // TODO: save booking to database and send confirmation email
+        const bookingRef = meta.bookingRef || null;
+        console.log("✅ Payment fulfilled for session:", session.id, "bookingRef:", bookingRef);
+
+        if (bookingRef) {
+          try {
+            await pool.query(
+              `UPDATE spf_bookings SET status = 'paid', stripe_session_id = ? WHERE external_booking_ref = ? OR local_booking_id = ?`,
+              [session.id, bookingRef, bookingRef]
+            );
+            console.log("✅ Booking status updated to paid for ref:", bookingRef);
+          } catch (dbErr) {
+            console.error("❌ Failed to update booking status:", dbErr.message);
+          }
+        }
       }
       break;
     }
@@ -582,6 +594,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       pickupTime,
       diff,
       couponCode = "",
+      bookingRef = "",
       bookingDetails,
     } = req.body;
 
@@ -610,6 +623,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       ],
       customer_email: customerEmail,
       metadata: {
+        bookingRef: bookingRef || "",
         parkingId: String(parkingId),
         customerName: customerName || "",
         firstName: bookingDetails?.firstName || "",
@@ -666,6 +680,81 @@ app.get("/stripe/session-status", async (req, res) => {
 /**
  * Fetches authoritative price from the external SPF pricing API
  */
+/**
+ * ✅ POST /booking/create
+ * Create a booking in the external admin system and store locally as pending_payment
+ */
+app.post("/booking/create", async (req, res) => {
+  try {
+    const {
+      UserLogged, UserId, ExistingCustomerDetails, ExistingVehicleDetail,
+      CustomerDetail, TravelDetail, VehicleDetail, ExtraServices,
+      DropoffDate, PickupDate, DropoffTime, PickupTime,
+      AirportCode, CouponCode, RateID, Price,
+    } = req.body;
+
+    if (!RateID || !DropoffDate || !PickupDate || !CustomerDetail?.Email) {
+      return res.status(400).json({ message: "Missing required booking fields" });
+    }
+
+    const token = process.env.SPF_TOKEN;
+    if (!token) {
+      return res.status(500).json({ message: "Server configuration error" });
+    }
+
+    // Call external create-booking API
+    const externalRes = await axios.post(
+      "https://stgbackend.simplyparkandfly.co.uk/create-booking",
+      {
+        UserLogged, UserId, ExistingCustomerDetails, ExistingVehicleDetail,
+        CustomerDetail, TravelDetail, VehicleDetail,
+        ExtraServices: ExtraServices || [],
+        DropoffDate, PickupDate, DropoffTime, PickupTime,
+        AirportCode, CouponCode: CouponCode || "", RateID, Price,
+        token,
+      },
+      { timeout: 20000 }
+    );
+
+    const externalData = externalRes.data;
+    console.log("📦 External create-booking response:", JSON.stringify(externalData));
+
+    // Extract booking reference from external API response
+    const externalBookingRef = externalData.booking_id || externalData.BookingId ||
+      externalData.bookingId || externalData.id || externalData.reference || null;
+
+    // Save to local DB as pending_payment
+    const [result] = await pool.query(
+      `INSERT INTO spf_bookings
+        (external_booking_ref, rate_id, customer_email, customer_name, dropoff_date, pickup_date,
+         dropoff_time, pickup_time, airport_code, price, status, raw_response, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_payment', ?, NOW())`,
+      [
+        externalBookingRef ? String(externalBookingRef) : null,
+        RateID,
+        CustomerDetail.Email,
+        `${CustomerDetail.FirstName} ${CustomerDetail.LastName}`.trim(),
+        DropoffDate, PickupDate, DropoffTime, PickupTime,
+        AirportCode, Price,
+        JSON.stringify(externalData),
+      ]
+    );
+
+    const localBookingId = result.insertId;
+
+    return res.json({
+      bookingRef: externalBookingRef || String(localBookingId),
+      localBookingId,
+    });
+
+  } catch (err) {
+    console.error("❌ /booking/create error:", err.response?.data || err.message);
+    return res.status(500).json({
+      message: err.response?.data?.message || err.message || "Failed to create booking",
+    });
+  }
+});
+
 /**
  * ✅ POST /parking/price
  * Fetch real price and terminals for a parking rate from the pricing API
@@ -736,6 +825,31 @@ async function getParkingPriceInPence(params) {
 }
 
 /**
- * ✅ Start server
+ * ✅ Create bookings table if it doesn't exist, then start server
  */
-app.listen(PORT, () => console.log(`Auth API listening on port ${PORT}`));
+pool.query(`
+  CREATE TABLE IF NOT EXISTS spf_bookings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    external_booking_ref VARCHAR(255) DEFAULT NULL,
+    stripe_session_id VARCHAR(255) DEFAULT NULL,
+    rate_id INT NOT NULL,
+    customer_email VARCHAR(255) NOT NULL,
+    customer_name VARCHAR(255) DEFAULT NULL,
+    dropoff_date DATE NOT NULL,
+    pickup_date DATE NOT NULL,
+    dropoff_time VARCHAR(10) DEFAULT NULL,
+    pickup_time VARCHAR(10) DEFAULT NULL,
+    airport_code VARCHAR(10) DEFAULT NULL,
+    price DECIMAL(10,2) NOT NULL,
+    status ENUM('pending_payment','paid','failed','cancelled') NOT NULL DEFAULT 'pending_payment',
+    raw_response TEXT DEFAULT NULL,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME DEFAULT NULL ON UPDATE NOW()
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+`).then(() => {
+  console.log("✅ spf_bookings table ready");
+  app.listen(PORT, () => console.log(`Auth API listening on port ${PORT}`));
+}).catch(err => {
+  console.error("❌ Failed to create spf_bookings table:", err.message);
+  process.exit(1);
+});
