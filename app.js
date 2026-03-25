@@ -666,6 +666,28 @@ app.get("/stripe/session-status", async (req, res) => {
 /**
  * Fetches authoritative price from the external SPF pricing API
  */
+/**
+ * ✅ POST /parking/price
+ * Fetch real price for a parking rate from the pricing API
+ */
+app.post("/parking/price", async (req, res) => {
+  try {
+    const { rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode = "" } = req.body;
+
+    if (!rateId || !dropoffDate || !pickupDate) {
+      return res.status(400).json({ message: "Missing required fields: rateId, dropoffDate, pickupDate" });
+    }
+
+    const amountInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
+    const priceInPounds = amountInPence / 100;
+
+    return res.json({ price: priceInPounds });
+  } catch (err) {
+    console.error("❌ /parking/price error:", err.message);
+    return res.status(500).json({ message: err.message || "Failed to fetch parking price" });
+  }
+});
+
 async function getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode }) {
   const token = process.env.SPF_TOKEN;
   if (!token) throw new Error("SPF_TOKEN not configured");
