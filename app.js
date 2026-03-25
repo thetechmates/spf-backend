@@ -683,6 +683,7 @@ app.post("/parking/price", async (req, res) => {
     return res.json({
       price: details.priceInPence / 100,
       terminals: details.terminals,
+      vas: details.vas,
     });
   } catch (err) {
     console.error("❌ /parking/price error:", err.message);
@@ -723,7 +724,9 @@ async function getParkingDetails({ rateId, dropoffDate, pickupDate, dropoffTime,
     ? data.terminals
     : {};
 
-  return { priceInPence: Math.round(price * 100), terminals };
+  const vas = Array.isArray(data.vas) ? data.vas : [];
+
+  return { priceInPence: Math.round(price * 100), terminals, vas };
 }
 
 // Keep backward-compatible helper used by create-checkout-session
