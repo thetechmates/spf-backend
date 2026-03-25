@@ -668,7 +668,7 @@ app.get("/stripe/session-status", async (req, res) => {
  */
 /**
  * ✅ POST /parking/price
- * Fetch real price for a parking rate from the pricing API
+ * Fetch real price and terminals for a parking rate from the pricing API
  */
 app.post("/parking/price", async (req, res) => {
   try {
@@ -678,17 +678,19 @@ app.post("/parking/price", async (req, res) => {
       return res.status(400).json({ message: "Missing required fields: rateId, dropoffDate, pickupDate" });
     }
 
-    const amountInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
-    const priceInPounds = amountInPence / 100;
+    const details = await getParkingDetails({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
 
-    return res.json({ price: priceInPounds });
+    return res.json({
+      price: details.priceInPence / 100,
+      terminals: details.terminals,
+    });
   } catch (err) {
     console.error("❌ /parking/price error:", err.message);
     return res.status(500).json({ message: err.message || "Failed to fetch parking price" });
   }
 });
 
-async function getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode }) {
+async function getParkingDetails({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode }) {
   const token = process.env.SPF_TOKEN;
   if (!token) throw new Error("SPF_TOKEN not configured");
 
@@ -716,7 +718,18 @@ async function getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoff
   const price = parseFloat(data.price || data.Price || "0");
   if (!price) throw new Error("Invalid price returned from pricing API");
 
-  return Math.round(price * 100); // convert £ to pence
+  // terminals is an object like { "N": "North Terminal", "S": "South Terminal" }
+  const terminals = data.terminals && typeof data.terminals === "object"
+    ? Object.values(data.terminals)
+    : [];
+
+  return { priceInPence: Math.round(price * 100), terminals };
+}
+
+// Keep backward-compatible helper used by create-checkout-session
+async function getParkingPriceInPence(params) {
+  const details = await getParkingDetails(params);
+  return details.priceInPence;
 }
 
 /**
