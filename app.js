@@ -570,16 +570,26 @@ app.post("/logout", (req, res) => {
  */
 app.post("/stripe/create-checkout-session", async (req, res) => {
   try {
-    const { parkingId, currency = "gbp", customerEmail, customerName, bookingDetails } = req.body;
+    const {
+      parkingId,
+      currency = "gbp",
+      customerEmail,
+      customerName,
+      rateId,
+      dropoffDate,
+      pickupDate,
+      dropoffTime,
+      pickupTime,
+      diff,
+      couponCode = "",
+      bookingDetails,
+    } = req.body;
 
-    if (!parkingId || !customerEmail) {
-      return res.status(400).json({ message: "Missing required fields: parkingId or customerEmail" });
+    if (!parkingId || !customerEmail || !rateId || !dropoffDate || !pickupDate) {
+      return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // TODO: replace this with a real DB lookup using parkingId
-    // Example: const [rows] = await pool.query("SELECT price FROM parking_products WHERE id = ?", [parkingId]);
-    // const amountInPence = rows[0].price;
-    const amountInPence = await getParkingPriceInPence(parkingId);
+    const amountInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
 
     const session = await stripe.checkout.sessions.create({
       ui_mode: "embedded",
@@ -654,16 +664,37 @@ app.get("/stripe/session-status", async (req, res) => {
 });
 
 /**
- * Stub: replace with real DB lookup
- * TODO: query your database for the actual price using parkingId
+ * Fetches authoritative price from the external SPF pricing API
  */
-async function getParkingPriceInPence(parkingId) {
-  // const [rows] = await pool.query("SELECT price_pence FROM parking_products WHERE id = ?", [parkingId]);
-  // if (!rows.length) throw new Error("Parking option not found");
-  // return rows[0].price_pence;
+async function getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode }) {
+  const token = process.env.SPF_TOKEN;
+  if (!token) throw new Error("SPF_TOKEN not configured");
 
-  // Temporary hardcoded price for testing (£31.50)
-  return 3150;
+  const response = await axios.post(
+    "https://stgbackend.simplyparkandfly.co.uk/checkout/page-details",
+    {
+      dropoff_date: dropoffDate,
+      pickup_date: pickupDate,
+      dropoff_time: dropoffTime || "12:00",
+      pickup_time: pickupTime || "12:00",
+      coupon_code: couponCode || "",
+      diff: diff || 1,
+      Rate_id: rateId,
+      token,
+    },
+    { timeout: 15000 }
+  );
+
+  const data = response.data;
+
+  if (data.STATUS === "ERROR") {
+    throw new Error(data.ERROR || "Failed to fetch parking price");
+  }
+
+  const price = parseFloat(data.price || data.Price || "0");
+  if (!price) throw new Error("Invalid price returned from pricing API");
+
+  return Math.round(price * 100); // convert £ to pence
 }
 
 /**
