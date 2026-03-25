@@ -703,10 +703,15 @@ app.post("/booking/create", async (req, res) => {
     }
 
     // Call external create-booking API
+    // Note: API requires boolean fields as strings ("true"/"false")
     const externalRes = await axios.post(
       "https://stgbackend.simplyparkandfly.co.uk/create-booking",
       {
-        UserLogged, UserId, ExistingCustomerDetails, ExistingVehicleDetail,
+        UserLogged: String(UserLogged || "false"),
+        UserId: UserId || "",
+        ExistingCustomerDetails: String(ExistingCustomerDetails || "false"),
+        ExistingVehicleDetail: String(ExistingVehicleDetail || "false"),
+        VehicleDetailId: "",
         CustomerDetail, TravelDetail, VehicleDetail,
         ExtraServices: ExtraServices || [],
         DropoffDate, PickupDate, DropoffTime, PickupTime,
@@ -719,9 +724,13 @@ app.post("/booking/create", async (req, res) => {
     const externalData = externalRes.data;
     console.log("📦 External create-booking response:", JSON.stringify(externalData));
 
-    // Extract booking reference from external API response
-    const externalBookingRef = externalData.booking_id || externalData.BookingId ||
-      externalData.bookingId || externalData.id || externalData.reference || null;
+    if (externalData.STATUS !== "SUCCESS") {
+      return res.status(502).json({ message: "Booking creation failed at provider", details: externalData });
+    }
+
+    // External API returns a PAYMENTURL (their own Stripe session) but no booking ID.
+    // We use our own Stripe Embedded Checkout, so we ignore their PAYMENTURL.
+    const externalBookingRef = null;
 
     // Save to local DB as pending_payment
     const [result] = await pool.query(
@@ -743,7 +752,7 @@ app.post("/booking/create", async (req, res) => {
     const localBookingId = result.insertId;
 
     return res.json({
-      bookingRef: externalBookingRef || String(localBookingId),
+      bookingRef: String(localBookingId),
       localBookingId,
     });
 
