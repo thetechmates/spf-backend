@@ -720,8 +720,8 @@ async function getParkingDetails({ rateId, dropoffDate, pickupDate, dropoffTime,
 
   // terminals is an object like { "N": "North Terminal", "S": "South Terminal" }
   const terminals = data.terminals && typeof data.terminals === "object"
-    ? Object.values(data.terminals)
-    : [];
+    ? data.terminals
+    : {};
 
   return { priceInPence: Math.round(price * 100), terminals };
 }
