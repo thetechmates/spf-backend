@@ -595,7 +595,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       diff,
       couponCode = "",
       bookingRef = "",
-      vasTotal = 0,
+      extraServices = [],
       bookingDetails,
     } = req.body;
 
@@ -604,25 +604,34 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
     }
 
     const basePriceInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
-    const amountInPence = basePriceInPence + (vasTotal || 0);
+
+    const lineItems = [
+      {
+        price_data: {
+          currency: currency.toLowerCase(),
+          product_data: {
+            name: `Airport Parking — ${parkingId}`,
+            description: `${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
+          },
+          unit_amount: basePriceInPence,
+        },
+        quantity: 1,
+      },
+      ...extraServices.map(service => ({
+        price_data: {
+          currency: currency.toLowerCase(),
+          product_data: { name: service.name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) },
+          unit_amount: Math.round(service.price * 100),
+        },
+        quantity: 1,
+      })),
+    ];
 
     const session = await stripe.checkout.sessions.create({
       ui_mode: "embedded",
       payment_method_types: ["card"],
       mode: "payment",
-      line_items: [
-        {
-          price_data: {
-            currency: currency.toLowerCase(),
-            product_data: {
-              name: `Airport Parking — ${parkingId}`,
-              description: `${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
-            },
-            unit_amount: amountInPence,
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       customer_email: customerEmail,
       metadata: {
         bookingRef: bookingRef || "",
