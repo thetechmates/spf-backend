@@ -596,6 +596,9 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       couponCode = "",
       bookingRef = "",
       extraServices = [],
+      parkingName = "",
+      parkingType = "",
+      airportName = "",
       bookingDetails,
     } = req.body;
 
@@ -610,8 +613,8 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
         price_data: {
           currency: currency.toLowerCase(),
           product_data: {
-            name: `Airport Parking — ${parkingId}`,
-            description: `${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
+            name: [parkingName, parkingType, airportName].filter(Boolean).join(" — "),
+            description: `Ref: ${bookingRef || "N/A"} · ${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
           },
           unit_amount: basePriceInPence,
         },
