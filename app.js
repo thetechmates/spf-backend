@@ -684,6 +684,7 @@ app.get("/stripe/session-status", async (req, res) => {
     res.json({
       status: session.status,
       customer_email: session.customer_details?.email || "",
+      bookingRef: session.metadata?.bookingRef || "",
     });
   } catch (error) {
     console.error("❌ Error retrieving session status:", error);
