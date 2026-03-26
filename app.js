@@ -595,6 +595,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       diff,
       couponCode = "",
       bookingRef = "",
+      vasTotal = 0,
       bookingDetails,
     } = req.body;
 
@@ -602,7 +603,8 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    const amountInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
+    const basePriceInPence = await getParkingPriceInPence({ rateId, dropoffDate, pickupDate, dropoffTime, pickupTime, diff, couponCode });
+    const amountInPence = basePriceInPence + (vasTotal || 0);
 
     const session = await stripe.checkout.sessions.create({
       ui_mode: "embedded",
