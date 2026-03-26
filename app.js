@@ -742,14 +742,18 @@ app.post("/booking/create", async (req, res) => {
       return res.status(502).json({ message: "Booking creation failed at provider", details: externalData });
     }
 
-    // Extract booking ref/ID from external API response (try common field names)
+    // Extract booking ref and booking ID separately from external API response
     const externalBookingRef =
-      externalData.BOOKINGID ||
-      externalData.BookingID ||
-      externalData.BookingId ||
       externalData.BOOKINGREF ||
       externalData.BookingRef ||
       externalData.bookingRef ||
+      null;
+
+    const externalBookingId =
+      externalData.BOOKINGID ||
+      externalData.BookingID ||
+      externalData.BookingId ||
+      externalData.bookingId ||
       null;
 
     // Save to local DB as pending_payment
@@ -773,7 +777,7 @@ app.post("/booking/create", async (req, res) => {
 
     return res.json({
       bookingRef: externalBookingRef ? String(externalBookingRef) : String(localBookingId),
-      BookingId: externalBookingRef ? String(externalBookingRef) : String(localBookingId),
+      BookingId: externalBookingId ? String(externalBookingId) : String(localBookingId),
       localBookingId,
     });
 
