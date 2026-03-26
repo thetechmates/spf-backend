@@ -613,7 +613,7 @@ app.post("/stripe/create-checkout-session", async (req, res) => {
         price_data: {
           currency: currency.toLowerCase(),
           product_data: {
-            name: [parkingName, parkingType, airportName].filter(Boolean).join(" — "),
+            name: [parkingName, parkingType, airportName.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())].filter(Boolean).join(" — "),
             description: `Ref: ${bookingRef || "N/A"} · ${bookingDetails?.arrivalDate || ""} to ${bookingDetails?.departureDate || ""}`,
           },
           unit_amount: basePriceInPence,
@@ -742,9 +742,15 @@ app.post("/booking/create", async (req, res) => {
       return res.status(502).json({ message: "Booking creation failed at provider", details: externalData });
     }
 
-    // External API returns a PAYMENTURL (their own Stripe session) but no booking ID.
-    // We use our own Stripe Embedded Checkout, so we ignore their PAYMENTURL.
-    const externalBookingRef = null;
+    // Extract booking ref/ID from external API response (try common field names)
+    const externalBookingRef =
+      externalData.BOOKINGID ||
+      externalData.BookingID ||
+      externalData.BookingId ||
+      externalData.BOOKINGREF ||
+      externalData.BookingRef ||
+      externalData.bookingRef ||
+      null;
 
     // Save to local DB as pending_payment
     const [result] = await pool.query(
@@ -766,7 +772,8 @@ app.post("/booking/create", async (req, res) => {
     const localBookingId = result.insertId;
 
     return res.json({
-      bookingRef: String(localBookingId),
+      bookingRef: externalBookingRef ? String(externalBookingRef) : String(localBookingId),
+      BookingId: externalBookingRef ? String(externalBookingRef) : String(localBookingId),
       localBookingId,
     });
 
